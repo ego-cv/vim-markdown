@@ -154,12 +154,20 @@ function! s:GetHeaderLevel(...)
     endif
 endfunction
 
+" Returns the number of words in a line. Note that this treats a bare '?' as a word,
+" which is what office 365 does, but gdocs does not.
+" TODO: tidy + add tests + make configurable
+function! s:GetWC(line)
+	return len(split(a:line))
+endfunction
+
 " Return list of headers and their levels.
 "
 function! s:GetHeaderList()
     let l:bufnr = bufnr('%')
     let l:fenced_block = 0
     let l:front_matter = 0
+    let l:wc = 0
     let l:header_list = []
     let l:vim_markdown_frontmatter = get(g:, "vim_markdown_frontmatter", 0)
     for i in range(1, line('$'))
@@ -191,18 +199,33 @@ function! s:GetHeaderList()
         else
             let l:is_header = 0
         endif
+	if l:is_header == 0 && l:front_matter == 0
+	    let l:wc = l:wc + s:GetWC(l:lineraw)
+	endif
         if l:is_header == 1 && l:fenced_block == 0 && l:front_matter == 0
             " remove hashes from atx headers
             if match(l:line, "^#") > -1
                 let l:line = substitute(l:line, '\v^#*[ ]*', '', '')
                 let l:line = substitute(l:line, '\v[ ]*#*$', '', '')
             endif
+	    if len(l:header_list) > 0
+		" our wc is that of the previous heading
+		let l:header_list[-1].wc = wc
+		let l:wc = 0
+	    endif
+
             " append line to list
             let l:level = s:GetHeaderLevel(i)
-            let l:item = {'level': l:level, 'text': l:line, 'lnum': i, 'bufnr': bufnr}
-            let l:header_list = l:header_list + [l:item]
+            let l:item = {'level': l:level, 'text': l:line, 'lnum': i, 'bufnr': bufnr, 'wc': 0}
+	    let l:header_list = l:header_list + [l:item]
         endif
     endfor
+    " once we reach the end of the file, we need to set the wc of the final
+    " heading
+    if len(l:header_list) > 0
+	    let l:header_list[-1].wc = wc
+    endif
+
     return l:header_list
 endfunction
 
@@ -377,7 +400,7 @@ function! s:Toc(...)
             endif
         endif
         " indent header based on level
-        let l:text = repeat('  ', h.level-1) . h.text
+        let l:text = repeat('  ', h.level-1) . h.text . ' (' . h.wc . ' words)'
         " keep track of the longest header size (heading level + title)
         let l:total_len = strdisplaywidth(l:text)
         if l:total_len > l:header_max_len
@@ -875,3 +898,4 @@ augroup Mkd
     autocmd InsertEnter,InsertLeave <buffer> call s:MarkdownRefreshSyntax(0)
     autocmd CursorHold,CursorHoldI <buffer> call s:MarkdownRefreshSyntax(0)
 augroup END
+
